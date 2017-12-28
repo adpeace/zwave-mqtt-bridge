@@ -1,0 +1,135 @@
+#!/usr/bin/env python
+
+"""Publish ZWave Multisensor events to MQTT.
+
+Connects to a Z-Wave controller using python-openzwave (use the --device
+option to specify a path to the device).  For any multilevel sensor devices,
+sets their reporting interval to 60s (assuming they have a "Group 1 Reporting
+Interval" setting, which the Aeotec MultiSensor 6 does), and then publishes a
+JSON message containing sensor data whenver it is received containing any of
+temperature, relative humidity, luminnance, or UV level.  (The name mapping is
+to make this consistent with the emonTH sensor implementation.)
+
+Tested so far with a simple Z-Wave network with two Aeotec MultiSensor 6
+devices only.
+
+Depends on the boilerio package and requires configuration to be created at
+/etc/sensors/config with at least an MQTT host to connect to and
+username/password to be used."""
+
+import os.path
+import time
+import signal
+import json
+import argparse
+from datetime import datetime
+
+import boilerio.config
+import paho.mqtt.client as mqtt
+from louie import dispatcher
+from openzwave.option import ZWaveOption
+from openzwave.network import ZWaveNetwork
+from watchdog.observers import Observer
+from watchdog.events import FileSystemEventHandler
+
+EXIT = False
+
+class DeviceWatcher(FileSystemEventHandler):
+    def __init__(self, device, network):
+        self.device = device
+        self.network = network
+        super(DeviceWatcher, self).__init__()
+
+    def on_deleted(self, event):
+        if event.src_path == self.device:
+            self.network.stop()
+        print "Deleted, %s" % str(event)
+
+    def on_created(self, event):
+        if event.src_path == self.device:
+            self.network.start()
+        print "Create, %s" % str(event)
+
+def main():
+    # Parse args:
+    parser = argparse.ArgumentParser(
+        description="MQTT interface to Z-Wave sensors")
+    parser.add_argument("--device", default="/dev/ttyACM0",
+                        help="Path to Z-Stick device")
+    parser.add_argument('-u', default='.', dest="user_path",
+                        help="Path to write user files (e.g. current Z-Wave "
+                             "configursation")
+    args = parser.parse_args()
+
+    # Load config so we can decide where to publish to:
+    cfg = boilerio.config.load_config()
+    mqtt_client = mqtt.Client()
+    mqtt_client.username_pw_set(cfg.get('mqtt', 'user'), cfg.get('mqtt', 'password'))
+    mqtt_client.connect(cfg.get('mqtt', 'host'), port=1883)
+    topic_base = cfg.get("emonhub", "basetopic") + "/ZWaveNode"
+
+    # Start MQTT thread in background: although we don't subscribe to events
+    # this is useful for automatically reconnecting to the service when it goes
+    # down.
+    mqtt_client.loop_start()
+
+    # Initialise openzwave.
+    zw_options = ZWaveOption(args.device, user_path=args.user_path)
+    zw_options.set_console_output(False)
+    zw_options.lock()
+    network = ZWaveNetwork(zw_options)
+    network.start()
+
+    # Disconnect/reconnect when the device node goes away/re-appears.
+    observer = Observer()
+    observer.schedule(DeviceWatcher(args.device, network), os.path.dirname(args.device))
+    observer.start()
+
+    print "Waiting for network"
+    while network.state != network.STATE_READY:
+        time.sleep(1)
+
+    print "network ready"
+
+    # Connect to events
+    def value_updated(network, node, value):
+        label_map = {
+            'Temperature': 'temperature',
+            'Relative Humidity': 'humidity',
+            'Luminance': 'luminance',
+            'Ultraviolet': 'ultraviolet',
+            }
+        if value.label in label_map:
+            print "%s update: %s %f" % (value.label, topic_base + str(node.node_id), value.data)
+            mqtt_client.publish(topic_base + str(node.node_id),
+                                payload=json.dumps({label_map[value.label]: value.data}))
+
+    def sigint_handler(sig, frame):
+        global EXIT
+        EXIT = True
+    signal.signal(signal.SIGINT, sigint_handler)
+    dispatcher.connect(value_updated, ZWaveNetwork.SIGNAL_VALUE)
+
+    # Configure nodes to puhblish data every 60s:
+    for node in network.nodes.values():
+        if not ("COMMAND_CLASS_SENSOR_MULTILEVEL" in
+                node.command_classes_as_string):
+            continue
+        for value in node.get_values().values():
+            if value.label == "Wake-up Interval":
+                value.data = 60
+            if value.label == "Group 1 Interval":
+                # Only relevant on battery
+                value.data = 60
+
+    # Loop until we're told to exit:
+    print "Running: Ctrl+C to exit."
+    while not EXIT:
+        signal.pause()
+    dispatcher.disconnect(value_updated, ZWaveNetwork.SIGNAL_VALUE)
+    observer.stop()
+
+    mqtt_client.loop_stop()
+
+if __name__ == "__main__":
+    main()

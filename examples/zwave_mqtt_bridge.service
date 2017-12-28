@@ -1,0 +1,13 @@
+[Unit]
+Description=ZWave to MQTT bridge for sensor data
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/zwave_mqtt_bridge -u /home/zwave
+User=zwave
+Restart=always
+RestartSec=60
+
+[Install]
+WantedBy=multi-user.target
+
