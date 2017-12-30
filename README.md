@@ -19,6 +19,22 @@ supported) and the value that was provided.
 
 You can install the Python package using `pip`, e.g. `pip install .`.
 
+You will need to a create a configuration file, `/etc/sensors/config`
+similar to the following:
+
+```
+[mqtt]
+user=username
+password=password
+host=host running mosquitto
+
+[emonhub]
+basetopic=emon_sensors
+```
+
+Messages will be published to a topic under the `basetopic` specified,
+according to the originating node on the network.
+
 To run at startup you can use the provided example `systemd` file, which
 needs to be installed in the `/etc/systemd/system` directory.  Note that
 the provided example assumes that there is a user called `zwave` that
