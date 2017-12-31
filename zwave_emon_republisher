@@ -1,0 +1,68 @@
+#!/usr/bin/env python
+
+import argparse
+import json
+import paho.mqtt.client as mqtt
+
+LABEL_MAP = {
+    "Temperature": "temperature",
+    "Relative Humidity": "humidity",
+    "Luminance": "luminance",
+    "Ultraviolet": "ultraviolet",
+    "Power": "power",
+    }
+
+def main():
+    # Parse args:
+    parser = argparse.ArgumentParser(
+        description="Republish Z-Wave messages as Emon messages that can be "
+                    "consumed by the Emonhub input daemon")
+    parser.add_argument("mqtt_host", default="localhost", type=str,
+                        help="MQTT host")
+    parser.add_argument("-U", default=None, type=str, dest="mqtt_user",
+                        help="MQTT username")
+    parser.add_argument("-p", default=None, type=str, dest="mqtt_pass",
+                        help="MQTT password")
+    parser.add_argument("-Z", "--zwave-updates-basetopic", default="zwave/updates", type=str,
+                        help="Base zwave topic to subscribe to")
+    parser.add_argument("-E", "--emon-basetopic", default="emon_sensors", type=str,
+                        help="Base emon topic to publish to")
+    args = parser.parse_args()
+
+    # Set up MQTT
+    mqtt_client = mqtt.Client()
+    if args.mqtt_user and args.mqtt_pass:
+        mqtt_client.username_pw_set(args.mqtt_user, args.mqtt_pass)
+
+    def on_message(client, userdata, msg):
+        try:
+            if msg.topic.startswith(args.zwave_updates_basetopic):
+                result = {}
+                node_id = int(msg.topic[len(args.zwave_updates_basetopic):].lstrip('/'))
+                data = json.loads(msg.payload)
+                # Map to the same names that OpenEnergyMonitor uses:
+                if isinstance(data, dict):
+                    for item, val in data.items():
+                        if item in LABEL_MAP and (isinstance(val, str) or
+                                                  isinstance(val, int) or
+                                                  isinstance(val, float)):
+                            result[LABEL_MAP[item]] = val
+
+                if result:
+                    emon_topic = args.emon_basetopic + "/ZWaveNode%d" % node_id
+                    client.publish(emon_topic, json.dumps(result))
+        except Exception as e:
+            print e
+
+    def on_connect(client, userdata, flags, rc):
+        if not rc:
+            client.subscribe(args.zwave_updates_basetopic + "/#")
+
+    mqtt_client.on_connect = on_connect
+    mqtt_client.on_message = on_message
+    mqtt_client.connect(args.mqtt_host)
+
+    mqtt_client.loop_forever()
+
+if __name__ == "__main__":
+    main()

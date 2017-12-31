@@ -1,0 +1,13 @@
+[Unit]
+Description=Republish ZWave events to emon topics
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/zwave_emon_republisher -U <mqtt-user> -p <mqtt-pass> <mqtt-host>
+User=zwave
+Restart=always
+RestartSec=60
+
+[Install]
+WantedBy=multi-user.target
+
