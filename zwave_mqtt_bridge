@@ -68,7 +68,9 @@ def main():
                         help="Path to Z-Stick device")
     parser.add_argument('-u', default='.', dest="user_path",
                         help="Path to write user files (e.g. current Z-Wave "
-                             "configursation")
+                             "configuration")
+    parser.add_argument('-c', default=None, dest="config_path",
+                        help="Path to openzwave configuration. Defaults to $user_path/config")
     parser.add_argument("--basetopic", default="zwave", type=str,
                         help="Base topic to publish/subscribe to")
     args = parser.parse_args()
@@ -123,7 +125,7 @@ def main():
     mqtt_client.loop_start()
 
     # Initialise openzwave.
-    zw_options = ZWaveOption(args.device, user_path=args.user_path)
+    zw_options = ZWaveOption(args.device, user_path=args.user_path, config_path=args.config_path)
     zw_options.set_console_output(False)
     zw_options.lock()
     network = ZWaveNetwork(zw_options)
