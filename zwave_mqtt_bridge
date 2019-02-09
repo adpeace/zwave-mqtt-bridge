@@ -14,17 +14,27 @@ devices only.
 """
 
 import os.path
+import sys
 import time
 import signal
 import json
 import argparse
+import logging
 
 import paho.mqtt.client as mqtt
-from louie import dispatcher
+
+# This is a result of python-openzwave doing the same thing:
+if sys.hexversion >= 0x3000000:
+    from pydispatch import dispatcher
+else:
+    from louie import dispatcher
+
 from openzwave.option import ZWaveOption
 from openzwave.network import ZWaveNetwork
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
+
+logging.basicConfig(level=logging.INFO)
 
 EXIT = False
 
@@ -37,12 +47,12 @@ class DeviceWatcher(FileSystemEventHandler):
     def on_deleted(self, event):
         if event.src_path == self.device:
             self.network.stop()
-        print "Deleted, %s" % str(event)
+        print("Deleted, %s" % str(event))
 
     def on_created(self, event):
         if event.src_path == self.device:
             self.network.start()
-        print "Create, %s" % str(event)
+        print("Create, %s" % str(event))
 
 def main():
     # Parse args:
@@ -74,26 +84,26 @@ def main():
 
     # Control commands:
     def on_message(client, userdata, msg):
-        print "- %s: %s" % (msg.topic, msg.payload)
+        print("- %s: %s" % (msg.topic, msg.payload))
 
         try:
             # Setting values:
             if msg.topic.startswith(set_basetopic):
                 # Control message: get the node ID:
                 node_id = int(msg.topic[len(set_basetopic):].lstrip('/'))
-                data = json.loads(msg.payload)
-                for value in network.nodes[node_id].get_values().values():
+                data = json.loads(msg.payload.decode())
+                for value in list(network.nodes[node_id].get_values().values()):
                     if value.label in data:
                         value.data = data[value.label]
             # Refresh values:
             elif msg.topic.startswith(refresh_basetopic):
                 node_id = int(msg.topic[len(refresh_basetopic):].lstrip('/'))
-                data = json.loads(msg.payload)
-                for value in network.nodes[node_id].get_values().values():
+                data = json.loads(msg.payload.decode())
+                for value in list(network.nodes[node_id].get_values().values()):
                     if value.label in data:
                         value.refresh()
         except Exception as e:
-            print "Error processing message: %s" % e
+            print("Error processing message: %s" % e)
 
     def on_connect(client, userdata, flags, rc):
         try:
@@ -101,7 +111,7 @@ def main():
                 client.subscribe(set_basetopic + '/#')
                 client.subscribe(refresh_basetopic + '/#')
         except Exception as e:
-            print "Error connecting: %s" % str(e)
+            print("Error connecting: %s" % str(e))
 
     mqtt_client.on_connect = on_connect
     mqtt_client.on_message = on_message
@@ -124,39 +134,55 @@ def main():
     observer.schedule(DeviceWatcher(args.device, network), os.path.dirname(args.device))
     observer.start()
 
-    print "Waiting for network"
+    print("Waiting for network")
     while network.state != network.STATE_READY:
         time.sleep(1)
 
-    print "Network ready"
+    print("Network ready")
 
     # Connect to events
     def value_updated(network, node, value):
-        print "%s update: %s %f" % (value.label, updates_basetopic + str(node.node_id), value.data)
-        mqtt_client.publish(updates_basetopic + str(node.node_id),
-                            payload=json.dumps({value.label: value.data}))
+        try:
+            print("%s update: %s %f" % (value.label, updates_basetopic + str(node.node_id), value.data))
+            mqtt_client.publish(updates_basetopic + str(node.node_id),
+                                payload=json.dumps({value.label: value.data}))
+        except Exception as e:
+            print("Error %s" % str(e))
+    def node_updated(network, node):
+        print("Node update %s " % str(node))
 
     def sigint_handler(sig, frame):
         global EXIT
         EXIT = True
     signal.signal(signal.SIGINT, sigint_handler)
     dispatcher.connect(value_updated, ZWaveNetwork.SIGNAL_VALUE)
+    dispatcher.connect(node_updated, ZWaveNetwork.SIGNAL_NODE)
 
-    # Configure nodes to puhblish data every 60s:
-    for node in network.nodes.values():
-        print node
+    # Do some initial setup.  This should be in configuration ideally.
+    for node in list(network.nodes.values()):
+        print(node)
         if not ("COMMAND_CLASS_SENSOR_MULTILEVEL" in
                 node.command_classes_as_string):
             continue
-        for value in node.get_values().values():
+
+        # Hack to find radiator valve:
+        if ('COMMAND_CLASS_SWITCH_MULTILEVEL' in
+                node.command_classes_as_string):
+            interval = 600
+        else:
+            interval = 60
+        for value in list(node.get_values().values()):
+            if value.label == "Command Options" and \
+                    "COMMAND_CLASS_SENSOR_MULTILEVEL" in node.command_classes_as_string:
+                value.data = 'Binary Sensor Report'
             if value.label == "Wake-up Interval":
-                value.data = 60
+                value.data = interval
             if value.label == "Group 1 Interval":
                 # Only relevant on battery
-                value.data = 60
+                value.data = interval
 
     # Loop until we're told to exit:
-    print "Running: Ctrl+C to exit."
+    print("Running: Ctrl+C to exit.")
     while not EXIT:
         signal.pause()
     dispatcher.disconnect(value_updated, ZWaveNetwork.SIGNAL_VALUE)

@@ -1,5 +1,11 @@
 import subprocess
+import sys
 from setuptools import setup
+
+if sys.hexversion >= 0x3000000:
+    dispatch_dependency = "pydispatch"
+else:
+    dispatch_dependency = "Louie-latest"
 
 # Try to create an rst long_description from README.md:
 try:
@@ -23,8 +29,7 @@ setup(name="zwave_mqtt_bridge",
           'License :: OSI Approved :: MIT License',
           ],
       scripts=['zwave_mqtt_bridge', 'zwave_emon_republisher'],
-      # Requires python-openxwave, which isn't available on PyPI
-      install_requires=['Louie', 'paho-mqtt', 'watchdog'],
+      install_requires=[dispatch_dependency, 'python-openzwave', 'paho-mqtt', 'watchdog'],
       zip_safe=False,
       )
 
