@@ -17,7 +17,7 @@ except Exception as error:
     long_description = None
 
 setup(name="zwave_mqtt_bridge",
-      version="0.0.2",
+      version="0.0.3",
       description="Bridge Z-Wave to MQTT",
       url="https://github.com/adpeace/zwave-mqtt-bridge.git",
       author="Andy Peace",
