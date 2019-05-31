@@ -135,10 +135,10 @@ def main():
     observer.start()
 
     print("Waiting for network")
-    while network.state != network.STATE_READY:
+    while network.state != network.STATE_AWAKED:
         time.sleep(1)
 
-    print("Network ready")
+    print("Network awake")
 
     # Connect to events
     def value_updated(network, node, value):
